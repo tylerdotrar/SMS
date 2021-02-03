@@ -152,7 +152,13 @@
             if ((($RootURL -match 'http://') -or ($RootURL -match 'https://')) -and ($RootURL -match $IPRegex)) {
                 $ServerIP = $Matches[0]
                 $ServerPort = $RootURL.Split($ServerIP+":")[-1]
-                $Results = (Test-NetConnection -RemoteAddress $ServerIP -Port $ServerPort).TCPTestSucceeded
+
+                # Added to fix Linux compatibility
+                if ($isLinux) { $Results = $TRUE }
+                
+                else {
+                    $Results = (Test-NetConnection -RemoteAddress $ServerIP -Port $ServerPort).TCPTestSucceeded
+                }
 
                 if ($Results) { break }
             }
