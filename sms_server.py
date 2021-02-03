@@ -5,33 +5,55 @@ __author__ = 'gaytan','tiler'
 import json
 import flask
 import argparse
-from datetime import datetime
 from flask import request, jsonify
 
 app = flask.Flask(__name__)
+app.config['CONFIG_PATH'] = './var' # Currently not used
 
 global messages 
-messages = [] # {message: x, targetUser : x, sender : x, timestamp : x}
+messages = [] # {message : x1, targetUser : y2, sender : z3, etc.}
 
+global credentials
+credentials = {} # {username : x2, password : y2, etc.}
+
+# Verify Content
 def json_check(info):
-    if 'uid' not in info:
-        return 'NO IDENTIFIER PRESENT'
-    elif info['uid'] != 'seventeenthirtyeight':
-        return 'INVALID IDENTIFIER'
-    elif 'message' not in info:
+    if 'message' not in info:
         return 'NO MESSAGE PRESENT'
     elif 'targetUser' not in info:
         return 'NO TARGETUSER PRESENT'
     else:
         return True
 
+# Verify Credentials
+def cred_check(content, field):
+    user = content[field]
+    if credentials == {}:
+        return 'NULL CREDENTIAL LIST'
+    elif user not in credentials:
+        return 'FAILED USER AUTH'
+    elif content['password'] != credentials[user]:
+        return 'WRONG PASSWORD'
+    else:
+        return True
 
-### MASTER ###
+
+### VIEW PENDING MESSAGES ###
 @app.route('/master', methods=['GET'])
 def root():
     if messages == []:
         return 'NO PENDING MESSAGES'
     return json.dumps(messages)
+
+
+### CREDENTIAL LOGGING ###
+@app.route('/update', methods=['POST'])
+def Update():
+    global credentials
+    body = request.get_json()
+
+    credentials.update({body['username']:body['password']})
+    return 'USER "' + body['username'] + '" CREDENTIALS UPDATED'
 
 
 ### SEND ### 
@@ -43,10 +65,14 @@ def Send():
     result = json_check(info)
     if result != True:
         return "SEND-ERROR: " + result
-        
-    content = request.get_json()
-    messages.append(content)
-    return 'SUCCESS: MESSAGE SENT TO ' + '"' + info['targetUser'] + '"'
+
+    cred_err = cred_check(info,'sender')
+    if cred_err != True:
+        return "CRED-ERROR: " + cred_err
+
+    del info['password']
+    messages.append(info)
+    return 'SUCCESS: MESSAGE SENT TO "' + info['targetUser'] + '"'
     
 
 ### RETRIEVE ###
@@ -55,13 +81,13 @@ def Retrieve():
     global messages
     info = request.get_json()
     
-    if 'uid' not in info:
-        return 'NO IDENTIFIER PRESENT'
-    elif info['uid'] != 'seventeenthirtyeight':
-        return 'INVALID IDENTIFIER'
     if 'targetUser' not in info:
-        return 'RETRIEVE-ERROR: NO TARGETUSER PRESENT'
-        
+        return 'RETR-ERROR: NO TARGETUSER PRESENT'
+    
+    cred_err = cred_check(info,'targetUser')
+    if cred_err != True:
+        return "CRED-ERROR: " + cred_err
+
     msgs = []
     for m in messages:
         if m['targetUser'] == info['targetUser']:
@@ -69,7 +95,7 @@ def Retrieve():
             messages.remove(m)
                 
     if msgs == []:
-        return 'NO MESSAGES FOR ' + '"' + info['targetUser'] + '"'
+        return 'NO MESSAGES FOR "' + info['targetUser'] + '"'
     return json.dumps(msgs)
 
 
