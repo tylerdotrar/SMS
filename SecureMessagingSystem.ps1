@@ -1,5 +1,29 @@
 ﻿function SecureMessagingSystem {
-    
+#.SYNOPSIS
+# Volatile dual encryption messaging system.
+# ARBITRARY VERSION NUMBER:  0.6.9
+# AUTHOR:  Tyler McCann (@tyler.rar)
+#
+#.DESCRIPTION
+# Placeholder
+#
+# Recommendations:
+# -- Placeholder
+#
+# Parameters:
+#    -Send          -->   Send message
+#    -Retrieve      -->   Retrieve message
+#    -Credentials   -->   Input / Modify user credentials with server
+#    -Check         -->   (Debug) Return quantity of pending messages
+#    -Raw           -->   (Debug) Return pending message data fields
+#    -Help          -->   Return Get-Help page
+#    
+# Example Usage:
+#    []  PS C:\Users\Bobby> 
+#
+#.LINK
+# https://github.com/tylerdotrar/SMS
+
     [Alias('SMS')]
 
     Param (
@@ -25,8 +49,12 @@
         else { $Encrypted = $FALSE }
 
         $EncMessage = Fucky64-Encrypt
-        $Timestamp = Get-Date -Format "dddd MM/dd/yyyy HH:mm"
+        #$Timestamp = Get-Date -Format "dddd MM/dd/yyyy HH:mm"
+        
+        $TZArray = ((Get-TimeZone).StandardName).split(' ')
+        foreach ($Word in $TZArray) { $TimeZone += $Word[0] }
 
+        $TimeStamp = Get-Date -Format "MM/dd/yyyy HH:mm $TimeZone"
 
         # Send Encoded / Encrypted Message
 
@@ -37,9 +65,15 @@
             'targetUser'    = $TargetUser
             'sender'        = $Username
             'password'      = $Password
-        }
+        } | ConvertTo-Json
 
-        (Invoke-WebRequest -Uri "$RootURL/send" -SkipCertificateCheck -ContentType "application/json; charset=utf-8" -Body ($Body | ConvertTo-Json) -Method POST).content
+
+        if ($PSEdition -eq 'Core') { 
+            (Invoke-WebRequest -Uri "$RootURL/send" -SkipCertificateCheck -ContentType "application/json; charset=utf-8" -Body $Body -Method POST).content
+        }
+        else {
+            (Invoke-WebRequest -Uri "$RootURL/send" -ContentType "application/json; charset=utf-8" -Body $Body -Method POST).content
+        }
     }
     function Retrieve-SMS {
 
@@ -48,9 +82,16 @@
         [pscustomobject]$Body = @{
             'targetUser'    = $Username
             'password'      = $Password
+        } | ConvertTo-Json
+
+
+        if ($PSEdition -eq 'Core') {
+            $Response = (Invoke-WebRequest -Uri "$RootURL/retrieve" -SkipCertificateCheck -ContentType "application/json; charset=utf-8" -Body $Body -Method GET).content
+        }
+        else {
+            $Response = (Invoke-WebRequest -Uri "$RootURL/retrieve" -ContentType "application/json; charset=utf-8" -Body $Body -Method GET).content
         }
 
-        $Response = (Invoke-WebRequest -Uri "$RootURL/retrieve" -SkipCertificateCheck -ContentType "application/json; charset=utf-8" -Body ($Body | ConvertTo-Json) -Method GET).content
 
         try {
 
@@ -100,7 +141,13 @@
     }
     function Check-Messages {
 
-        $Response = (Invoke-WebRequest "$RootURL/master" -SkipCertificateCheck -Method GET).content
+        if ($PSEdition -eq 'Core') {
+            $Response = (Invoke-WebRequest "$RootURL/master" -SkipCertificateCheck -Method GET).content
+        }
+        else { 
+            $Response = (Invoke-WebRequest "$RootURL/master" -Method GET).content
+        }
+
 
         try { $Output = $Response | ConvertFrom-Json }
         catch { return $Response }
@@ -126,7 +173,7 @@
         $CredPath = "$PSScriptRoot/var/creds.ini"
         
         if ((Test-Path $CredPath) -and !($Credentials)) {
-            return (Get-Content $CredPath)
+            return (Get-Content $CredPath | ConvertFrom-Json )
         }
 
         Write-Host 'CREDENTIAL CREATION' -ForegroundColor Red
@@ -151,7 +198,7 @@
             # Verify server is reachable
             if ((($RootURL -match 'http://') -or ($RootURL -match 'https://')) -and ($RootURL -match $IPRegex)) {
                 $ServerIP = $Matches[0]
-                $ServerPort = $RootURL.Split($ServerIP+":")[-1]
+                $ServerPort = $RootURL.Split(':')[-1]
 
                 # Added to fix Linux compatibility
                 if ($isLinux) { $Results = $TRUE }
@@ -170,29 +217,79 @@
             'username'  = $CredUser.ToUpper()
             'password'  = $CredPass
             'server'    = $RootURL
-        }
+        } | ConvertTo-Json
+
 
         if (!(Test-Path "$PSScriptRoot/var")) { mkdir "$PSScriptRoot/var" | Out-Null }
-        Set-Content $CredPath -Value ($CredObject | ConvertTo-Json)
-        (Invoke-WebRequest -Uri "$RootURL/update" -SkipCertificateCheck -ContentType "application/json; charset=utf-8" -Body ($CredObject | ConvertTo-Json) -Method POST).content | Out-Null
+        Set-Content $CredPath -Value $CredObject
 
-        return ($CredObject | ConvertTo-Json)
+
+        if ($PSEdition -eq 'Core') {
+            Invoke-WebRequest -Uri "$RootURL/update" -SkipCertificateCheck -ContentType "application/json; charset=utf-8" -Body $CredObject -Method POST | Out-Null
+        }
+        else {
+            Invoke-WebRequest -Uri "$RootURL/update" -ContentType "application/json; charset=utf-8" -Body $CredObject -Method POST | Out-Null
+        }
+        
+
+        return $CredObject
+    }
+    function HTTPS-Bypass ([switch]$Undo) {
+
+        if ($Undo) { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $NULL }
+
+        else {
+
+            # [!] Required by non-Core PowerShell for self-signed certificate bypass (HTTPS).
+            $CertBypass = @'
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+
+public class SelfSignedCerts
+{
+    public static void Bypass()
+    {
+        ServicePointManager.ServerCertificateValidationCallback = 
+            delegate
+            (
+                Object obj, 
+                X509Certificate certificate, 
+                X509Chain chain, 
+                SslPolicyErrors errors
+            )
+            {
+                return true;
+            };
+    }
+        
+}
+'@
+            Add-Type $CertBypass
+            [SelfSignedCerts]::Bypass()
+        }
     }
 
-    # Import Fucky64
-    . $PSScriptRoot/lib/Fucky64-Abridged.ps1
 
-    # Acquire / Update User Credentials
-    $CredObject = User-Creds
-
-    # Exit
-    if (($Send -eq $FALSE) -and ($Retrieve -eq $FALSE) -and ($Check -eq $FALSE) -and ($Credentials -eq $FALSE)) { 
+    # Return if No Parameter Selected
+    if ((!$Send) -and (!$Retrieve) -and (!$Check) -and (!$Credentials)) { 
         return (Write-Host 'No method selected.' -ForegroundColor Red)
     }
 
-    $RootURL = ($CredObject | ConvertFrom-Json).server
-    $Username = ($CredObject | ConvertFrom-Json).username
-    $Password = ($CredObject | ConvertFrom-Json).password
+
+    # Import Fucky64 for Encryption / Decryption
+    . $PSScriptRoot/lib/Fucky64-Abridged.ps1
+
+    # Bypass Self-Signed Certificates for Desktop PowerShell
+    if ($PSEdition -ne 'Core') { HTTPS-Bypass }  
+
+    # Acquire / Update User Credentials
+    $CredObject = User-Creds
+    $RootURL = ($CredObject).server
+    $Username = ($CredObject).username
+    $Password = ($CredObject).password  
+
 
     # Prompt for Mandatory Parameters
     if ($Send -eq $TRUE) {
@@ -202,7 +299,7 @@
         if ((!$TargetUser) -and (!$Check)) { Write-Host 'Enter TargetUser: ' -ForegroundColor Yellow -NoNewline ; $TargetUser = Read-Host }
     }
 
-    # Minor error catching
+    # Minor Error Catching
     if ((!$Message) -and ($Send -eq $TRUE)) { return (Write-Host 'Invalid message input.' -ForegroundColor Red) }
     if (($TargetUser -like "*'*") -or ($TargetUser -like "*`"*")) { return (Write-Host 'Invalid user input.' -ForegroundColor Red) }
     $TargetUser = $TargetUser.ToUpper()
@@ -211,4 +308,7 @@
     if ($Send) { Send-SMS }                 # Send Messages
     elseif ($Retrieve) { Retrieve-SMS }     # Retrieve Messages
     elseif ($Check) { Check-Messages }      # Check Pending Messages
+
+    # Remove Self-Signed Certificate Bypass
+    if ($PSEdition -ne 'Core') { HTTPS-Bypass -Undo }
 }
